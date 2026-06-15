@@ -10,9 +10,65 @@
     html, body {
       height: 100%;
       font-family: 'Segoe UI', sans-serif;
-      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
       color: #fff;
       overflow: hidden;
+    }
+
+    /* ── Fond animé Jour / Nuit ── */
+    #sky {
+      position: fixed; inset: 0; z-index: -1;
+      overflow: hidden;
+      transition: background 2s ease;
+      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    }
+    #sky.sky-day {
+      background: linear-gradient(135deg, #4facfe, #00c6ff, #a1c4fd);
+    }
+    #sky.sky-night {
+      background: linear-gradient(135deg, #0f0c29, #302b63, #1b2735);
+    }
+
+    .celestial {
+      position: absolute; font-size: 3.2rem;
+      opacity: 0; transition: opacity 1.5s ease;
+      animation: float 8s ease-in-out infinite;
+    }
+    .sun  { top: 8%; left: 12%; }
+    .moon { top: 8%; right: 12%; }
+    #sky.sky-day  .sun  { opacity: 1; }
+    #sky.sky-night .moon { opacity: 1; }
+    @keyframes float {
+      0%,100% { transform: translateY(0); }
+      50%     { transform: translateY(-18px); }
+    }
+
+    .cloud {
+      position: absolute; font-size: 2.6rem; opacity: 0;
+      transition: opacity 1.5s ease;
+      animation: drift linear infinite;
+      left: -15%;
+    }
+    #sky.sky-day .cloud { opacity: .75; }
+    .cloud1 { top: 14%; animation-duration: 70s; }
+    .cloud2 { top: 28%; animation-duration: 95s; animation-delay: -30s; }
+    .cloud3 { top: 20%; animation-duration: 80s; animation-delay: -55s; }
+    @keyframes drift {
+      from { left: -15%; }
+      to   { left: 110%; }
+    }
+
+    #stars {
+      position: absolute; inset: 0;
+      opacity: 0; transition: opacity 2s ease;
+    }
+    #sky.sky-night #stars { opacity: 1; }
+    .star {
+      position: absolute; background: #fff; border-radius: 50%;
+      animation: twinkle 2.5s ease-in-out infinite alternate;
+    }
+    @keyframes twinkle {
+      from { opacity: .2; }
+      to   { opacity: 1; }
     }
 
     /* ── Layout principal en grille ── */
@@ -23,6 +79,8 @@
       grid-template-columns: 1fr;
       gap: 8px;
       padding: 10px;
+      position: relative;
+      z-index: 1;
     }
 
     /* ── Header compact ── */
@@ -41,6 +99,11 @@
       background: linear-gradient(90deg,#7b2ff7,#f107a3);
       border-radius: 20px; padding: 2px 8px;
       font-size: .68rem; font-weight: 600; margin-left: 6px;
+    }
+    #daynight-label {
+      font-size: .8rem; font-weight: 600;
+      background: rgba(255,255,255,.1);
+      border-radius: 20px; padding: 3px 12px;
     }
     #status-bar { display:flex; align-items:center; gap:6px; font-size:.8rem; }
     #status-dot {
@@ -90,7 +153,7 @@
     #btn-csv:hover { opacity:.85; }
     #save-status { font-size:.72rem; color:#90caf9; white-space:nowrap; }
 
-    /* ── Zone principale : cards + chart côte à côte ── */
+    /* ── Zone principale : cards + charts côte à côte ── */
     .main-grid {
       display: grid;
       grid-template-columns: 260px 1fr;
@@ -147,7 +210,13 @@
     .bar-fill.pluie { background: linear-gradient(90deg,#0096c7,#023e8a); }
     .bar-fill.beau  { background: linear-gradient(90deg,#ffd166,#f4a261); }
 
-    /* ── Colonne droite : graphique ── */
+    /* ── Colonne droite : graphiques ── */
+    .charts-col {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
     .chart-card {
       background: rgba(255,255,255,.08);
       border-radius: 12px; padding: 12px;
@@ -155,22 +224,45 @@
       display: flex;
       flex-direction: column;
       min-height: 0;
+      flex: 1;
+    }
+    .chart-card .chart-head {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0; margin-bottom: 8px; flex-wrap: wrap; gap: 6px;
     }
     .chart-card h3 {
       font-size: .82rem; color: #90caf9;
-      margin-bottom: 8px; flex-shrink: 0;
     }
+    #range-select {
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 8px; padding: 4px 10px;
+      color: #fff; font-size: .78rem;
+    }
+    #range-select option { color: #000; }
     .chart-wrap { flex: 1; position: relative; min-height: 0; }
     .chart-wrap canvas { position:absolute; top:0; left:0; width:100%!important; height:100%!important; }
   </style>
 </head>
 <body>
+
+<!-- FOND ANIMÉ JOUR / NUIT -->
+<div id="sky" class="sky-night">
+  <div class="celestial sun">☀️</div>
+  <div class="celestial moon">🌙</div>
+  <div class="cloud cloud1">☁️</div>
+  <div class="cloud cloud2">☁️</div>
+  <div class="cloud cloud3">☁️</div>
+  <div id="stars"></div>
+</div>
+
 <div class="page">
 
   <!-- HEADER -->
   <header>
     <h1>⛅ Station Météo STM32N6 <span class="npu-badge">NPU IA</span></h1>
     <div id="status-bar">
+      <span id="daynight-label">🌙 ...</span>
       <div id="status-dot"></div>
       <span id="status-text">Non configuré</span>
       <span id="refresh-counter"></span>
@@ -255,25 +347,49 @@
 
     </div><!-- /left-col -->
 
-    <!-- COLONNE DROITE : GRAPHIQUE -->
-    <div class="chart-card">
-      <h3>📈 Probabilités Pluie & Beau temps — dernières mesures</h3>
-      <div class="chart-wrap">
-        <canvas id="myChart"></canvas>
+    <!-- COLONNE DROITE : GRAPHIQUES -->
+    <div class="charts-col">
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>📈 Capteurs — Température / Humidité / Pression</h3>
+          <select id="range-select" onchange="onRangeChange()">
+            <option value="5">5 min</option>
+            <option value="30" selected>30 min</option>
+            <option value="60">1 heure</option>
+            <option value="120">2 heures</option>
+          </select>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="sensorChart"></canvas>
+        </div>
       </div>
-    </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>🌧☀️ Probabilités Pluie & Beau temps</h3>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="myChart"></canvas>
+        </div>
+      </div>
+
+    </div><!-- /charts-col -->
 
   </div><!-- /main-grid -->
 
 </div><!-- /page -->
 
 <script>
-var histLabels=[], histPluie=[], histBeau=[];
-var MAX=30, pollInterval=null, countdown=5;
+/* ── Historique complet (toutes les mesures recues) ── */
+var fullHistory = [];          /* {time, temp, hum, pres, alt, pluie, beau, dayNight} */
+var MAX_POINTS  = 1500;         /* ~2h a 5s/mesure, avec marge */
+var rangeMinutes = 30;
+var pollInterval=null, countdown=5;
 
 /* ── Stockage CSV en mémoire ── */
 var csvRows = [];
-var CSV_HEADER = "Date,Heure,Temperature(C),Humidite(%),Pression(hPa),Altitude(m),Pluie(%),Beau(%),Meteo";
+var CSV_HEADER = "Date,Heure,Temperature(C),Humidite(%),Pression(hPa),Altitude(m),Pluie(%),Beau(%),Meteo,JourNuit";
 var lastSaveMinute = -1;  /* pour sauvegarder sur GitHub 1x/minute */
 
 /* ── Config GitHub ── */
@@ -281,26 +397,26 @@ var GH_OWNER = 'maram72005';
 var GH_REPO  = 'station-meteo';
 var GH_FILE  = 'data.csv';
 
-/* ── Chart ── */
-var chart = new Chart(document.getElementById('myChart').getContext('2d'),{
+/* ── Chart : Pluie / Beau ── */
+var rainChart = new Chart(document.getElementById('myChart').getContext('2d'),{
   type:'line',
   data:{
-    labels: histLabels,
+    labels: [],
     datasets:[
       {
         label:'🌧 Pluie (%)',
-        data: histPluie,
+        data: [],
         borderColor:'#0096c7',
         backgroundColor:'rgba(0,150,199,.2)',
-        tension:.4, fill:true, pointRadius:3,
+        tension:.4, fill:true, pointRadius:2,
         borderWidth:2
       },
       {
         label:'☀️ Beau temps (%)',
-        data: histBeau,
+        data: [],
         borderColor:'#ffd166',
         backgroundColor:'rgba(255,209,102,.15)',
-        tension:.4, fill:true, pointRadius:3,
+        tension:.4, fill:true, pointRadius:2,
         borderWidth:2
       }
     ]
@@ -328,6 +444,105 @@ var chart = new Chart(document.getElementById('myChart').getContext('2d'),{
     }
   }
 });
+
+/* ── Chart : Capteurs (Temp / Humidite / Pression) ── */
+var sensorChart = new Chart(document.getElementById('sensorChart').getContext('2d'),{
+  type:'line',
+  data:{
+    labels: [],
+    datasets:[
+      {
+        label:'🌡️ Température (°C)',
+        data: [],
+        borderColor:'#ff6b6b',
+        backgroundColor:'rgba(255,107,107,.1)',
+        tension:.4, fill:false, pointRadius:1.5,
+        borderWidth:2, yAxisID:'y'
+      },
+      {
+        label:'💧 Humidité (%)',
+        data: [],
+        borderColor:'#4dd0e1',
+        backgroundColor:'rgba(77,208,225,.1)',
+        tension:.4, fill:false, pointRadius:1.5,
+        borderWidth:2, yAxisID:'y1'
+      },
+      {
+        label:'📊 Pression (hPa)',
+        data: [],
+        borderColor:'#b39ddb',
+        backgroundColor:'rgba(179,157,219,.1)',
+        tension:.4, fill:false, pointRadius:1.5,
+        borderWidth:2, yAxisID:'y2'
+      }
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    animation:{duration:300},
+    interaction:{ mode:'index', intersect:false },
+    scales:{
+      x:{
+        ticks:{color:'rgba(255,255,255,.5)', maxTicksLimit:8, font:{size:10}},
+        grid:{color:'rgba(255,255,255,.05)'}
+      },
+      y:{
+        position:'left',
+        title:{display:true, text:'°C', color:'rgba(255,255,255,.5)'},
+        ticks:{color:'rgba(255,255,255,.5)', font:{size:10}},
+        grid:{color:'rgba(255,255,255,.05)'}
+      },
+      y1:{
+        position:'right',
+        min:0, max:100,
+        title:{display:true, text:'%', color:'rgba(255,255,255,.5)'},
+        ticks:{color:'rgba(255,255,255,.5)', font:{size:10}},
+        grid:{drawOnChartArea:false}
+      },
+      y2:{
+        position:'right',
+        display:false
+      }
+    },
+    plugins:{
+      legend:{
+        labels:{color:'rgba(255,255,255,.8)', font:{size:11},
+                boxWidth:12, padding:16}
+      }
+    }
+  }
+});
+
+/* ── Etoiles animées (fond de nuit) ── */
+(function initStars(){
+  var box = document.getElementById('stars');
+  for(var i=0;i<70;i++){
+    var s = document.createElement('div');
+    s.className = 'star';
+    var size = (Math.random()*2+1).toFixed(1);
+    s.style.width  = size+'px';
+    s.style.height = size+'px';
+    s.style.left = (Math.random()*100)+'%';
+    s.style.top  = (Math.random()*65)+'%';
+    s.style.animationDelay = (Math.random()*3).toFixed(2)+'s';
+    box.appendChild(s);
+  }
+})();
+
+/* ── Jour / Nuit ── */
+function setDayNight(isDay){
+  var sky = document.getElementById('sky');
+  sky.classList.toggle('sky-day', isDay);
+  sky.classList.toggle('sky-night', !isDay);
+  var label = document.getElementById('daynight-label');
+  label.textContent = isDay ? '☀️ Il fait jour' : '🌙 Il fait nuit';
+}
+
+/* ── Changement de plage du graphique ── */
+function onRangeChange(){
+  rangeMinutes = parseInt(document.getElementById('range-select').value, 10);
+  refreshCharts();
+}
 
 /* ── Démarrer ── */
 function startPolling(){
@@ -419,7 +634,11 @@ function updateUI(d, receivedAt){
     m.textContent='☀️ CIEL DÉGAGÉ';    m.className='pred-meteo beau';  ic.textContent='☀️';
   }
 
-  /* Historique graphique + CSV */
+  /* Jour / Nuit (capteur de luminosité PE0) */
+  var dayNight = d.jour_nuit || (d.D===1?'JOUR':(d.D===0?'NUIT':null));
+  if(dayNight){ setDayNight(dayNight==='JOUR'); }
+
+  /* Historique graphiques + CSV */
   var t=new Date(receivedAt);
   var hh=t.getHours().toString().padStart(2,'0');
   var mm=t.getMinutes().toString().padStart(2,'0');
@@ -427,12 +646,17 @@ function updateUI(d, receivedAt){
   var label=hh+':'+mm+':'+ss;
   var dateStr=t.toLocaleDateString('fr-FR');
 
-  if(!histLabels.length || histLabels[histLabels.length-1]!==label){
-    histLabels.push(label);
-    histPluie.push(pluie);
-    histBeau.push(beau);
-    if(histLabels.length>MAX){ histLabels.shift(); histPluie.shift(); histBeau.shift(); }
-    chart.update('none');
+  var last = fullHistory[fullHistory.length-1];
+  if(!last || last.label!==label){
+    fullHistory.push({
+      time: t, label: label,
+      temp: +d.temperature, hum: +d.humidity, pres: +d.pressure,
+      alt: Math.round(d.altitude||0),
+      pluie: pluie, beau: beau,
+      dayNight: dayNight
+    });
+    if(fullHistory.length>MAX_POINTS) fullHistory.shift();
+    refreshCharts();
 
     /* Ajouter une ligne au CSV en mémoire */
     var row = [
@@ -441,7 +665,7 @@ function updateUI(d, receivedAt){
       (+d.humidity).toFixed(1),
       (+d.pressure).toFixed(1),
       Math.round(d.altitude||0),
-      pluie, beau, meteo
+      pluie, beau, meteo, (dayNight||'')
     ].join(',');
     csvRows.push(row);
 
@@ -453,6 +677,26 @@ function updateUI(d, receivedAt){
       saveToGitHub(ghToken);
     }
   }
+}
+
+/* ── Recalcule les graphiques selon la plage choisie ── */
+function refreshCharts(){
+  var cutoff = Date.now() - rangeMinutes*60000;
+  var pts = fullHistory.filter(function(p){ return p.time.getTime() >= cutoff; });
+  if(pts.length===0) pts = fullHistory.slice(-1);
+
+  var labels = pts.map(function(p){ return p.label; });
+
+  rainChart.data.labels = labels;
+  rainChart.data.datasets[0].data = pts.map(function(p){ return p.pluie; });
+  rainChart.data.datasets[1].data = pts.map(function(p){ return p.beau; });
+  rainChart.update('none');
+
+  sensorChart.data.labels = labels;
+  sensorChart.data.datasets[0].data = pts.map(function(p){ return p.temp; });
+  sensorChart.data.datasets[1].data = pts.map(function(p){ return p.hum; });
+  sensorChart.data.datasets[2].data = pts.map(function(p){ return p.pres; });
+  sensorChart.update('none');
 }
 
 /* ── Télécharger CSV localement ── */
