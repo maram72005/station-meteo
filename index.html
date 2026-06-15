@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Station Météo STM32N6 — IA NPU</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body {
+      height: 100%;
+      font-family: 'Segoe UI', sans-serif;
+      color: #fff;
+      overflow: hidden;
+    }
+
+    /* ── Fond animé Jour / Nuit ── */
+    #sky {
+      position: fixed; inset: 0; z-index: -1;
+      overflow: hidden;
+      transition: background 2s ease;
+      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    }
+    #sky.sky-day {
+      background: linear-gradient(135deg, #4facfe, #00c6ff, #a1c4fd);
+    }
+    #sky.sky-night {
+      background: linear-gradient(135deg, #0f0c29, #302b63, #1b2735);
+    }
+
+    .celestial {
+      position: absolute; font-size: 3.2rem;
+      opacity: 0; transition: opacity 1.5s ease;
+      animation: float 8s ease-in-out infinite;
+    }
+    .sun  { top: 8%; left: 12%; }
+    .moon { top: 8%; right: 12%; }
+    #sky.sky-day  .sun  { opacity: 1; }
+    #sky.sky-night .moon { opacity: 1; }
+    @keyframes float {
+      0%,100% { transform: translateY(0); }
+      50%     { transform: translateY(-18px); }
+    }
+
+    .cloud {
+      position: absolute; font-size: 2.6rem; opacity: 0;
+      transition: opacity 1.5s ease;
+      animation: drift linear infinite;
+      left: -15%;
+    }
+    #sky.sky-day .cloud { opacity: .75; }
+    .cloud1 { top: 14%; animation-duration: 70s; }
+    .cloud2 { top: 28%; animation-duration: 95s; animation-delay: -30s; }
+    .cloud3 { top: 20%; animation-duration: 80s; animation-delay: -55s; }
+    @keyframes drift {
+      from { left: -15%; }
+      to   { left: 110%; }
+    }
+
+    #stars {
+      position: absolute; inset: 0;
+      opacity: 0; transition: opacity 2s ease;
+    }
+    #sky.sky-night #stars { opacity: 1; }
+    .star {
+      position: absolute; background: #fff; border-radius: 50%;
+      animation: twinkle 2.5s ease-in-out infinite alternate;
+    }
+    @keyframes twinkle {
+      from { opacity: .2; }
+      to   { opacity: 1; }
+    }
+
+    /* ── Layout principal en grille ── */
+    .page {
+      display: grid;
+      height: 100vh;
+      grid-template-rows: auto auto 1fr;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      padding: 10px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── Header compact ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 6px 10px;
+      background: rgba(255,255,255,.06);
+      border-radius: 12px;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    .npu-badge {
+      background: linear-gradient(90deg,#7b2ff7,#f107a3);
+      border-radius: 20px; padding: 2px 8px;
+      font-size: .68rem; font-weight: 600; margin-left: 6px;
+    }
+    #daynight-label {
+      font-size: .8rem; font-weight: 600;
+      background: rgba(255,255,255,.1);
+      border-radius: 20px; padding: 3px 12px;
+    }
+    #status-bar { display:flex; align-items:center; gap:6px; font-size:.8rem; }
+    #status-dot {
+      width:10px; height:10px; border-radius:50%;
+      background:#f44336; transition:background .4s;
+    }
+    #status-dot.ok  { background:#4caf50; animation:pulse 1.5s infinite; }
+    @keyframes pulse {
+      0%,100%{box-shadow:0 0 0 0 rgba(76,175,80,.5)}
+      50%    {box-shadow:0 0 0 6px rgba(76,175,80,0)}
+    }
+    #refresh-counter { font-size:.75rem; color:rgba(255,255,255,.4); }
+
+    /* ── Config compacte ── */
+    #config-panel {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 6px 10px;
+      background: rgba(255,255,255,.06);
+      border-radius: 12px;
+    }
+    #config-panel input {
+      flex: 1; min-width: 120px;
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 8px; padding: 5px 10px;
+      color: #fff; font-size: .8rem;
+    }
+    #config-panel input::placeholder { color: rgba(255,255,255,.35); }
+    #btn-start {
+      padding: 6px 16px;
+      background: linear-gradient(90deg,#0096c7,#0077b6);
+      border: none; border-radius: 8px;
+      color: #fff; font-size: .85rem; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+    }
+    #btn-start:hover { opacity:.85; }
+    #btn-csv {
+      padding: 6px 12px;
+      background: linear-gradient(90deg,#2d6a4f,#1b4332);
+      border: none; border-radius: 8px;
+      color: #fff; font-size: .82rem; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+    }
+    #btn-csv:hover { opacity:.85; }
+    #save-status { font-size:.72rem; color:#90caf9; white-space:nowrap; }
+
+    /* ── Zone principale : cards + charts côte à côte ── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    /* ── Colonne gauche : cards capteurs + prédiction ── */
+    .left-col {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    /* Cards capteurs en 2x2 */
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .card {
+      background: rgba(255,255,255,.08);
+      border-radius: 12px; padding: 10px 8px;
+      text-align: center;
+      border: 1px solid rgba(255,255,255,.1);
+    }
+    .card .icon  { font-size: 1.4rem; }
+    .card .value { font-size: 1.5rem; font-weight: 700; color: #90caf9; }
+    .card .unit  { font-size: .7rem; color: rgba(255,255,255,.5); }
+    .card .label { font-size: .68rem; color: rgba(255,255,255,.4); margin-top: 2px; }
+
+    /* Prédiction IA */
+    .pred-card {
+      flex: 1;
+      background: rgba(255,255,255,.08);
+      border-radius: 12px; padding: 12px;
+      border: 1px solid rgba(255,255,255,.1);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .pred-header { display:flex; align-items:center; gap:8px; }
+    .pred-icon  { font-size: 2rem; }
+    .pred-meteo { font-size: 1.1rem; font-weight: 700; }
+    .pred-meteo.pluie { color: #90caf9; }
+    .pred-meteo.beau  { color: #ffd166; }
+    .pred-sub { font-size: .68rem; color: rgba(255,255,255,.4); margin-top: 1px; }
+
+    .bar-wrap { }
+    .bar-label { font-size: .72rem; color: rgba(255,255,255,.55); margin-bottom: 3px;
+                 display:flex; justify-content:space-between; }
+    .bar-bg { background: rgba(255,255,255,.1); border-radius:20px; height:10px; overflow:hidden; }
+    .bar-fill { height:100%; border-radius:20px; transition:width .6s; }
+    .bar-fill.pluie { background: linear-gradient(90deg,#0096c7,#023e8a); }
+    .bar-fill.beau  { background: linear-gradient(90deg,#ffd166,#f4a261); }
+
+    /* ── Colonne droite : graphiques ── */
+    .charts-col {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+    .chart-card {
+      background: rgba(255,255,255,.08);
+      border-radius: 12px; padding: 12px;
+      border: 1px solid rgba(255,255,255,.1);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      flex: 1;
+    }
+    .chart-card .chart-head {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0; margin-bottom: 8px; flex-wrap: wrap; gap: 6px;
+    }
+    .chart-card h3 {
+      font-size: .82rem; color: #90caf9;
+    }
+    #range-select {
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 8px; padding: 4px 10px;
+      color: #fff; font-size: .78rem;
+    }
+    #range-select option { color: #000; }
+    .chart-wrap { flex: 1; position: relative; min-height: 0; }
+    .chart-wrap canvas { position:absolute; top:0; left:0; width:100%!important; height:100%!important; }
+  </style>
+</head>
+<body>
+
+<!-- FOND ANIMÉ JOUR / NUIT -->
+<div id="sky" class="sky-night">
+  <div class="celestial sun">☀️</div>
+  <div class="celestial moon">🌙</div>
+  <div class="cloud cloud1">☁️</div>
+  <div class="cloud cloud2">☁️</div>
+  <div class="cloud cloud3">☁️</div>
+  <div id="stars"></div>
+</div>
+
+<div class="page">
+
+  <!-- HEADER -->
+  <header>
+    <h1>⛅ Station Météo STM32N6 <span class="npu-badge">NPU IA</span></h1>
+    <div id="status-bar">
+      <span id="daynight-label">🌙 ...</span>
+      <div id="status-dot"></div>
+      <span id="status-text">Non configuré</span>
+      <span id="refresh-counter"></span>
+    </div>
+  </header>
+
+  <!-- CONFIG -->
+  <div id="config-panel">
+    <input id="cfg-appid"   placeholder="App ID TTN"/>
+    <input id="cfg-apikey"  type="password" placeholder="API Key TTN (NNSXS.xxx)"/>
+    <input id="cfg-region"  placeholder="Région" value="eu1" style="max-width:55px"/>
+    <input id="cfg-ghtoken" type="password" placeholder="GitHub Token (optionnel)"/>
+    <button id="btn-start" onclick="startPolling()">▶ Démarrer</button>
+    <button id="btn-csv"   onclick="downloadCSV()">⬇ CSV</button>
+    <span id="save-status"></span>
+  </div>
+
+  <!-- GRILLE PRINCIPALE -->
+  <div class="main-grid">
+
+    <!-- COLONNE GAUCHE -->
+    <div class="left-col">
+
+      <!-- 4 capteurs -->
+      <div class="cards">
+        <div class="card">
+          <div class="icon">🌡️</div>
+          <div class="value" id="val-temp">--</div>
+          <div class="unit">°C</div>
+          <div class="label">Température</div>
+        </div>
+        <div class="card">
+          <div class="icon">💧</div>
+          <div class="value" id="val-hum">--</div>
+          <div class="unit">%</div>
+          <div class="label">Humidité</div>
+        </div>
+        <div class="card">
+          <div class="icon">📊</div>
+          <div class="value" id="val-pres">--</div>
+          <div class="unit">hPa</div>
+          <div class="label">Pression</div>
+        </div>
+        <div class="card">
+          <div class="icon">📍</div>
+          <div class="value" id="val-alt">--</div>
+          <div class="unit">m</div>
+          <div class="label">Altitude</div>
+        </div>
+      </div>
+
+      <!-- Prédiction IA -->
+      <div class="pred-card">
+        <div class="pred-header">
+          <div class="pred-icon" id="pred-icon">🌤️</div>
+          <div>
+            <div class="pred-meteo beau" id="pred-meteo">En attente...</div>
+            <div class="pred-sub">Prédiction IA — STM32N6 NPU</div>
+          </div>
+        </div>
+
+        <div class="bar-wrap">
+          <div class="bar-label">
+            <span>🌧 Pluie</span>
+            <span id="pct-pluie" style="color:#90caf9;font-weight:600">0%</span>
+          </div>
+          <div class="bar-bg">
+            <div class="bar-fill pluie" id="bar-pluie" style="width:0%"></div>
+          </div>
+        </div>
+
+        <div class="bar-wrap">
+          <div class="bar-label">
+            <span>☀️ Beau</span>
+            <span id="pct-beau" style="color:#ffd166;font-weight:600">0%</span>
+          </div>
+          <div class="bar-bg">
+            <div class="bar-fill beau" id="bar-beau" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /left-col -->
+
+    <!-- COLONNE DROITE : GRAPHIQUES -->
+    <div class="charts-col">
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>📈 Capteurs — Température / Humidité / Pression</h3>
+          <select id="range-select" onchange="onRangeChange()">
+            <option value="5">5 min</option>
+            <option value="30" selected>30 min</option>
+            <option value="60">1 heure</option>
+            <option value="120">2 heures</option>
+          </select>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="sensorChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>🌧☀️ Probabilités Pluie & Beau temps</h3>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="myChart"></canvas>
+        </div>
+      </div>
+
+    </div><!-- /charts-col -->
+
+  </div><!-- /main-grid -->
+
+</div><!-- /page -->
+
+<script>
+/* ── Historique complet (toutes les mesures recues) ── */
+var fullHistory = [];          /* {time, temp, hum, pres, alt, pluie, beau, dayNight} */
+var MAX_POINTS  = 1500;         /* ~2h a 5s/mesure, avec marge */
+var rangeMinutes = 30;
+var pollInterval=null, countdown=5;
+
+/* ── Stockage CSV en mémoire ── */
+var csvRows = [];
+var CSV_HEADER = "Date,Heure,Temperature(C),Humidite(%),Pression(hPa),Altitude(m),Pluie(%),Beau(%),Meteo,JourNuit";
+var lastSaveMinute = -1;  /* pour sauvegarder sur GitHub 1x/minute */
+
+/* ── Config GitHub ── */
+var GH_OWNER = 'maram72005';
+var GH_REPO  = 'station-meteo';
+var GH_FILE  = 'data.csv';
+
+/* ── Chart : Pluie / Beau ── */
+var rainChart = new Chart(document.getElementById('myChart').getContext('2d'),{
+  type:'line',
+  data:{
+    labels: [],
+    datasets:[
+      {
+        label:'🌧 Pluie (%)',
+        data: [],
+        borderColor:'#0096c7',
+        backgroundColor:'rgba(0,150,199,.2)',
+        tension:.4, fill:true, pointRadius:2,
+        borderWidth:2
+      },
+      {
+        label:'☀️ Beau temps (%)',
+        data: [],
+        borderColor:'#ffd166',
+        backgroundColor:'rgba(255,209,102,.15)',
+        tension:.4, fill:true, pointRadius:2,
+        borderWidth:2
+      }
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    animation:{duration:300},
+    scales:{
+      x:{
+        ticks:{color:'rgba(255,255,255,.5)', maxTicksLimit:8, font:{size:10}},
+        grid:{color:'rgba(255,255,255,.05)'}
+      },
+      y:{
+        min:0, max:100,
+        ticks:{color:'rgba(255,255,255,.5)', font:{size:10},
+               callback:function(v){return v+'%'}},
+        grid:{color:'rgba(255,255,255,.05)'}
+      }
+    },
+    plugins:{
+      legend:{
+        labels:{color:'rgba(255,255,255,.8)', font:{size:11},
+                boxWidth:12, padding:16}
+      }
+    }
+  }
+});
+
+/* ── Chart : Capteurs (Temp / Humidite / Pression) ── */
+var sensorChart = new Chart(document.getElementById('sensorChart').getContext('2d'),{
+  type:'line',
+  data:{
+    labels: [],
+    datasets:[
+      {
+        label:'🌡️ Température (°C)',
+        data: [],
+        borderColor:'#ff6b6b',
+        backgroundColor:'rgba(255,107,107,.1)',
+        tension:.4, fill:false, pointRadius:1.5,
+        borderWidth:2, yAxisID:'y'
+      },
+      {
+        label:'💧 Humidité (%)',
+        data: [],
+        borderColor:'#4dd0e1',
+        backgroundColor:'rgba(77,208,225,.1)',
+        tension:.4, fill:false, pointRadius:1.5,
+        borderWidth:2, yAxisID:'y1'
+      },
+      {
+        label:'📊 Pression (hPa)',
+        data: [],
+        borderColor:'#b39ddb',
+        backgroundColor:'rgba(179,157,219,.1)',
+        tension:.4, fill:false, pointRadius:1.5,
+        borderWidth:2, yAxisID:'y2'
+      }
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    animation:{duration:300},
+    interaction:{ mode:'index', intersect:false },
+    scales:{
+      x:{
+        ticks:{color:'rgba(255,255,255,.5)', maxTicksLimit:8, font:{size:10}},
+        grid:{color:'rgba(255,255,255,.05)'}
+      },
+      y:{
+        position:'left',
+        title:{display:true, text:'°C', color:'rgba(255,255,255,.5)'},
+        ticks:{color:'rgba(255,255,255,.5)', font:{size:10}},
+        grid:{color:'rgba(255,255,255,.05)'}
+      },
+      y1:{
+        position:'right',
+        min:0, max:100,
+        title:{display:true, text:'%', color:'rgba(255,255,255,.5)'},
+        ticks:{color:'rgba(255,255,255,.5)', font:{size:10}},
+        grid:{drawOnChartArea:false}
+      },
+      y2:{
+        position:'right',
+        display:false
+      }
+    },
+    plugins:{
+      legend:{
+        labels:{color:'rgba(255,255,255,.8)', font:{size:11},
+                boxWidth:12, padding:16}
+      }
+    }
+  }
+});
+
+/* ── Etoiles animées (fond de nuit) ── */
+(function initStars(){
+  var box = document.getElementById('stars');
+  for(var i=0;i<70;i++){
+    var s = document.createElement('div');
+    s.className = 'star';
+    var size = (Math.random()*2+1).toFixed(1);
+    s.style.width  = size+'px';
+    s.style.height = size+'px';
+    s.style.left = (Math.random()*100)+'%';
+    s.style.top  = (Math.random()*65)+'%';
+    s.style.animationDelay = (Math.random()*3).toFixed(2)+'s';
+    box.appendChild(s);
+  }
+})();
+
+/* ── Jour / Nuit ── */
+function setDayNight(isDay){
+  var sky = document.getElementById('sky');
+  sky.classList.toggle('sky-day', isDay);
+  sky.classList.toggle('sky-night', !isDay);
+  var label = document.getElementById('daynight-label');
+  label.textContent = isDay ? '☀️ Il fait jour' : '🌙 Il fait nuit';
+}
+
+/* ── Changement de plage du graphique ── */
+function onRangeChange(){
+  rangeMinutes = parseInt(document.getElementById('range-select').value, 10);
+  refreshCharts();
+}
+
+/* ── Démarrer ── */
+function startPolling(){
+  var appId   = document.getElementById('cfg-appid').value.trim();
+  var apiKey  = document.getElementById('cfg-apikey').value.trim();
+  var region  = document.getElementById('cfg-region').value.trim()||'eu1';
+  var ghToken = document.getElementById('cfg-ghtoken').value.trim();
+
+  if(!appId||!apiKey){ alert('Remplis App ID et API Key TTN !'); return; }
+  localStorage.setItem('ttn_appid',  appId);
+  localStorage.setItem('ttn_apikey', apiKey);
+  localStorage.setItem('ttn_region', region);
+  if(ghToken) localStorage.setItem('gh_token', ghToken);
+
+  if(pollInterval) clearInterval(pollInterval);
+  fetchData(appId,apiKey,region);
+  countdown = 5;
+
+  pollInterval = setInterval(function(){
+    countdown--;
+    document.getElementById('refresh-counter').textContent = '('+countdown+'s)';
+    if(countdown <= 0){
+      countdown = 5;
+      fetchData(appId,apiKey,region);
+    }
+  }, 1000);
+}
+
+/* ── Fetch TTN Storage API ── */
+function fetchData(appId, apiKey, region){
+  var url = 'https://'+region+'.cloud.thethings.network/api/v3/as/applications/'
+            + encodeURIComponent(appId)
+            + '/packages/storage/uplink_message?limit=5&order=-received_at';
+
+  fetch(url,{ headers:{'Authorization':'Bearer '+apiKey} })
+  .then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.text();
+  })
+  .then(function(text){
+    var lines = text.trim().split('\n').filter(function(l){ return l.trim(); });
+    var data=null, receivedAt=new Date().toISOString();
+
+    for(var i=0;i<lines.length;i++){
+      var line = lines[i].replace(/^data:\s*/,'').trim();
+      if(!line) continue;
+      try{
+        var msg = JSON.parse(line);
+        var payload =
+          (msg.result&&msg.result.uplink_message&&msg.result.uplink_message.decoded_payload)||
+          (msg.uplink_message&&msg.uplink_message.decoded_payload)||
+          (msg.decoded_payload)||null;
+        if(payload&&payload.temperature!=null){
+          data=payload;
+          receivedAt=(msg.result&&msg.result.received_at)||(msg.received_at)||receivedAt;
+          break;
+        }
+      }catch(e){}
+    }
+
+    if(!data) throw new Error('Pas de donnees');
+    updateUI(data, receivedAt);
+    setStatus('ok','En direct ✓');
+  })
+  .catch(function(e){ setStatus('err','Erreur : '+e.message); });
+}
+
+/* ── Mise à jour ── */
+function updateUI(d, receivedAt){
+  if(d.temperature!=null) document.getElementById('val-temp').textContent=(+d.temperature).toFixed(1);
+  if(d.humidity   !=null) document.getElementById('val-hum').textContent =(+d.humidity).toFixed(1);
+  if(d.pressure   !=null) document.getElementById('val-pres').textContent=(+d.pressure).toFixed(1);
+  if(d.altitude   !=null) document.getElementById('val-alt').textContent =Math.round(d.altitude);
+
+  var pluie=d.pluie_pct!=null?+d.pluie_pct:0;
+  var beau =d.beau_pct !=null?+d.beau_pct:(100-pluie);
+  var meteo=d.meteo||(pluie>=50?'PLUIE':'BEAU');
+
+  document.getElementById('bar-pluie').style.width=pluie+'%';
+  document.getElementById('bar-beau').style.width =beau+'%';
+  document.getElementById('pct-pluie').textContent=pluie+'%';
+  document.getElementById('pct-beau').textContent =beau+'%';
+
+  var m=document.getElementById('pred-meteo');
+  var ic=document.getElementById('pred-icon');
+  if(meteo==='PLUIE'){
+    m.textContent='🌧 PLUIE PROBABLE'; m.className='pred-meteo pluie'; ic.textContent='🌧';
+  } else {
+    m.textContent='☀️ CIEL DÉGAGÉ';    m.className='pred-meteo beau';  ic.textContent='☀️';
+  }
+
+  /* Jour / Nuit (capteur de luminosité PE0) */
+  var dayNight = d.jour_nuit || (d.D===1?'JOUR':(d.D===0?'NUIT':null));
+  if(dayNight){ setDayNight(dayNight==='JOUR'); }
+
+  /* Historique graphiques + CSV */
+  var t=new Date(receivedAt);
+  var hh=t.getHours().toString().padStart(2,'0');
+  var mm=t.getMinutes().toString().padStart(2,'0');
+  var ss=t.getSeconds().toString().padStart(2,'0');
+  var label=hh+':'+mm+':'+ss;
+  var dateStr=t.toLocaleDateString('fr-FR');
+
+  var last = fullHistory[fullHistory.length-1];
+  if(!last || last.label!==label){
+    fullHistory.push({
+      time: t, label: label,
+      temp: +d.temperature, hum: +d.humidity, pres: +d.pressure,
+      alt: Math.round(d.altitude||0),
+      pluie: pluie, beau: beau,
+      dayNight: dayNight
+    });
+    if(fullHistory.length>MAX_POINTS) fullHistory.shift();
+    refreshCharts();
+
+    /* Ajouter une ligne au CSV en mémoire */
+    var row = [
+      dateStr, label,
+      (+d.temperature).toFixed(1),
+      (+d.humidity).toFixed(1),
+      (+d.pressure).toFixed(1),
+      Math.round(d.altitude||0),
+      pluie, beau, meteo, (dayNight||'')
+    ].join(',');
+    csvRows.push(row);
+
+    /* Sauvegarde GitHub 1 fois par minute */
+    var curMinute = t.getHours()*60 + t.getMinutes();
+    var ghToken = localStorage.getItem('gh_token');
+    if(ghToken && curMinute !== lastSaveMinute && csvRows.length > 0){
+      lastSaveMinute = curMinute;
+      saveToGitHub(ghToken);
+    }
+  }
+}
+
+/* ── Recalcule les graphiques selon la plage choisie ── */
+function refreshCharts(){
+  var cutoff = Date.now() - rangeMinutes*60000;
+  var pts = fullHistory.filter(function(p){ return p.time.getTime() >= cutoff; });
+  if(pts.length===0) pts = fullHistory.slice(-1);
+
+  var labels = pts.map(function(p){ return p.label; });
+
+  rainChart.data.labels = labels;
+  rainChart.data.datasets[0].data = pts.map(function(p){ return p.pluie; });
+  rainChart.data.datasets[1].data = pts.map(function(p){ return p.beau; });
+  rainChart.update('none');
+
+  sensorChart.data.labels = labels;
+  sensorChart.data.datasets[0].data = pts.map(function(p){ return p.temp; });
+  sensorChart.data.datasets[1].data = pts.map(function(p){ return p.hum; });
+  sensorChart.data.datasets[2].data = pts.map(function(p){ return p.pres; });
+  sensorChart.update('none');
+}
+
+/* ── Télécharger CSV localement ── */
+function downloadCSV(){
+  if(!csvRows.length){ alert('Aucune donnée collectée pour le moment.'); return; }
+  var content = CSV_HEADER + '\n' + csvRows.join('\n');
+  var blob = new Blob([content], {type:'text/csv;charset=utf-8;'});
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href = url;
+  a.download = 'meteo_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ── Sauvegarder sur GitHub — ACCUMULE les données (n'écrase pas) ── */
+function saveToGitHub(token){
+  var apiUrl = 'https://api.github.com/repos/'+GH_OWNER+'/'+GH_REPO+'/contents/'+GH_FILE;
+  var saveEl = document.getElementById('save-status');
+  saveEl.textContent = '💾 Sauvegarde...';
+
+  /* 1. Lire le fichier existant sur GitHub */
+  fetch(apiUrl, {
+    headers: { 'Authorization': 'token '+token, 'Accept': 'application/vnd.github.v3+json' }
+  })
+  .then(function(r){ return r.ok ? r.json() : null; })
+  .then(function(existing){
+    var oldLines = [];
+    var sha = null;
+
+    if(existing && existing.content){
+      sha = existing.sha;
+      /* Décoder le contenu base64 existant */
+      var decoded = decodeURIComponent(escape(atob(existing.content.replace(/\n/g,''))));
+      var lines = decoded.split('\n').filter(function(l){ return l.trim(); });
+      /* Garder l'entête + toutes les lignes existantes (sauf entête) */
+      if(lines.length > 1) oldLines = lines.slice(1);
+    }
+
+    /* 2. Fusionner : anciennes lignes + nouvelles (éviter doublons par horodatage) */
+    var existingTimestamps = {};
+    oldLines.forEach(function(l){
+      var cols = l.split(',');
+      if(cols.length >= 2) existingTimestamps[cols[0]+cols[1]] = true;
+    });
+
+    var newLines = csvRows.filter(function(r){
+      var cols = r.split(',');
+      return cols.length >= 2 && !existingTimestamps[cols[0]+cols[1]];
+    });
+
+    var allLines = oldLines.concat(newLines);
+    var totalLines = allLines.length;
+
+    /* 3. Construire le fichier complet */
+    var content = CSV_HEADER + '\n' + allLines.join('\n');
+    var b64 = btoa(unescape(encodeURIComponent(content)));
+
+    var body = {
+      message: 'Meteo ' + new Date().toLocaleString('fr-FR') + ' (' + totalLines + ' mesures)',
+      content: b64
+    };
+    if(sha) body.sha = sha;
+
+    /* 4. Écrire sur GitHub */
+    return fetch(apiUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': 'token '+token,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }).then(function(r){
+      if(r.ok){
+        saveEl.textContent = '💾 GitHub : ' + totalLines + ' mesures totales';
+      } else {
+        saveEl.textContent = '⚠ Erreur GitHub (token ?)';
+      }
+    });
+  })
+  .catch(function(e){ saveEl.textContent = '⚠ Erreur : '+e.message; });
+}
+
+function setStatus(type,msg){
+  document.getElementById('status-dot').className=type==='ok'?'ok':type==='err'?'err':'';
+  document.getElementById('status-text').textContent=msg;
+}
+
+window.onload=function(){
+  var a=localStorage.getItem('ttn_appid');
+  var k=localStorage.getItem('ttn_apikey');
+  var r=localStorage.getItem('ttn_region');
+  var g=localStorage.getItem('gh_token');
+  if(a) document.getElementById('cfg-appid').value=a;
+  if(k) document.getElementById('cfg-apikey').value=k;
+  if(r) document.getElementById('cfg-region').value=r;
+  if(g) document.getElementById('cfg-ghtoken').value=g;
+  if(a&&k) startPolling();
+};
+</script>
+</body>
+</html>
