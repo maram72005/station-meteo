@@ -175,9 +175,6 @@
       gap: 6px;
     }
     .card.span2 { grid-column: 1 / -1; }
-    .lux-bar-bg { background:rgba(255,255,255,.1); border-radius:20px; height:8px; overflow:hidden; margin-top:6px; }
-    .lux-bar-fill { height:100%; border-radius:20px; transition:width .6s;
-                    background:linear-gradient(90deg,#ffd166,#ff9f1c); }
     .card {
       background: rgba(255,255,255,.08);
       border-radius: 12px; padding: 10px 8px;
@@ -316,21 +313,12 @@
           <div class="unit">m</div>
           <div class="label">Altitude</div>
         </div>
-        <div class="card span2">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div class="icon">☀️</div>
-              <div>
-                <div class="label" style="text-align:left;">Luminosité</div>
-                <div style="display:flex;align-items:baseline;gap:4px;">
-                  <div class="value" id="val-lux">--</div>
-                  <div class="unit">%</div>
-                </div>
-              </div>
-            </div>
-            <div id="lux-badge" style="font-size:.7rem;padding:2px 10px;border-radius:20px;background:rgba(255,255,255,.1);white-space:nowrap;">--</div>
-          </div>
-          <div class="lux-bar-bg"><div class="lux-bar-fill" id="lux-bar" style="width:0%"></div></div>
+        <div class="card">
+          <div class="icon">💡</div>
+          <div class="value" id="val-lux">--</div>
+          <div class="unit">%</div>
+          <div class="label">Luminosité</div>
+          <div id="lux-badge" style="font-size:.6rem;margin-top:3px;color:rgba(255,255,255,.5);">--</div>
         </div>
       </div>
 
@@ -666,11 +654,10 @@ function updateUI(d, receivedAt){
   var lux = d.lux_pct != null ? +d.lux_pct : null;
   if(lux !== null){
     document.getElementById('val-lux').textContent = Math.round(lux);
-    document.getElementById('lux-bar').style.width = Math.min(lux,100)+'%';
     var badge = document.getElementById('lux-badge');
-    if(lux >= 50){ badge.textContent='☀️ JOUR LUMINEUX'; badge.style.background='rgba(255,209,102,.25)'; }
-    else if(lux >= 10){ badge.textContent='⛅ NUAGEUX';       badge.style.background='rgba(255,255,255,.15)'; }
-    else               { badge.textContent='🌙 NUIT';          badge.style.background='rgba(30,30,80,.4)'; }
+    if(lux >= 50)      badge.textContent = '☀️ LUMINEUX';
+    else if(lux >= 10) badge.textContent = '⛅ NUAGEUX';
+    else               badge.textContent = '🌙 NUIT';
   }
 
   /* Jour / Nuit */
